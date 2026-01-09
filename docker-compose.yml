@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  yandex-music-bot:
+    build: .
+    container_name: yandex-music-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - YANDEX_MUSIC_TOKEN=${YANDEX_MUSIC_TOKEN}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
