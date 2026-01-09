@@ -3,7 +3,7 @@ from aiogram.types import Message, FSInputFile
 from aiogram.filters import CommandStart, Command
 import os
 from bot.services import download_yandex_music_track
-from bot.utils import validate_yandex_music_url
+from bot.utils import validate_yandex_music_url, clean_url
 
 router = Router()
 
@@ -12,35 +12,29 @@ async def cmd_start(message: Message):
     await message.answer(
         "🎵 Привет! Я бот для скачивания музыки из Яндекс.Музыки.\n\n"
         "Отправь мне ссылку на трек из Яндекс.Музыки, и я скачаю его для тебя.\n\n"
-        "Примеры ссылок:\n"
+        "📋 Поддерживаемые форматы:\n"
         "• https://music.yandex.ru/album/1234567/track/7654321\n"
-        "• https://music.yandex.ru/track/1234567\n\n"
+        "• https://music.yandex.ru/track/1234567\n"
+        "• https://music.yandex.com/album/1234567/track/7654321\n\n"
+        "Ссылки могут содержать параметры (например, utm_source), я их проигнорирую.\n\n"
         "⚠️ Используйте бота только для скачивания музыки, на которую у вас есть права!"
-    )
-
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    await message.answer(
-        "📋 Помощь по использованию бота:\n\n"
-        "1. Скопируйте ссылку на трек из Яндекс.Музыки\n"
-        "2. Отправьте ссылку мне\n"
-        "3. Я скачаю и отправлю вам трек\n\n"
-        "Поддерживаемые форматы ссылок:\n"
-        "- Прямая ссылка на трек\n"
-        "- Ссылка на трек в альбоме\n\n"
-        "❓ Проблемы? Проверьте:\n"
-        "• Ссылка действительна\n"
-        "• Трек доступен в вашем регионе\n"
-        "• У вас есть Яндекс.Музыка токен (необязательно, но желательно)"
     )
 
 @router.message(F.text)
 async def handle_url(message: Message):
     url = message.text.strip()
     
+    # Очищаем URL от параметров отслеживания
+    cleaned_url = clean_url(url)
+    
     # Проверка валидности ссылки
-    if not validate_yandex_music_url(url):
-        await message.answer("❌ Пожалуйста, отправьте валидную ссылку Яндекс.Музыки.")
+    if not validate_yandex_music_url(cleaned_url):
+        await message.answer(
+            "❌ Пожалуйста, отправьте валидную ссылку Яндекс.Музыки.\n\n"
+            "Примеры правильных ссылок:\n"
+            "• https://music.yandex.ru/album/36147972/track/138015169\n"
+            "• https://music.yandex.ru/track/138015169"
+        )
         return
     
     # Отправка статуса обработки
@@ -48,26 +42,45 @@ async def handle_url(message: Message):
     
     try:
         # Скачивание трека
-        result = await download_yandex_music_track(url)
+        result = await download_yandex_music_track(cleaned_url)
         
         if result["success"]:
             await status_msg.edit_text("✅ Трек скачан! Отправляю...")
             
             # Отправка аудиофайла
             audio_file = FSInputFile(result["file_path"])
+            
+            # Создаем подпись
+            caption = f"🎵 {result['artist']} - {result['title']}"
+            if result['duration'] > 0:
+                from bot.utils import format_duration
+                caption += f"\n⏱ Длительность: {format_duration(result['duration'])}"
+            
             await message.answer_audio(
                 audio=audio_file,
                 title=result["title"],
                 performer=result["artist"],
-                caption=f"🎵 {result['artist']} - {result['title']}"
+                caption=caption
             )
             
             # Удаление временного файла
-            os.remove(result["file_path"])
+            try:
+                os.remove(result["file_path"])
+            except:
+                pass
+            
             await status_msg.delete()
             
         else:
-            await status_msg.edit_text(f"❌ Ошибка: {result['error']}")
+            error_msg = result['error']
+            advice = ""
+            
+            if "не найден" in error_msg.lower():
+                advice = "\n\n💡 Проверьте, что трек доступен в вашем регионе и вы правильно скопировали ссылку."
+            elif "токен" in error_msg.lower():
+                advice = "\n\n💡 Попробуйте обновить токен Яндекс.Музыки в настройках бота."
+            
+            await status_msg.edit_text(f"❌ {error_msg}{advice}")
             
     except Exception as e:
-        await status_msg.edit_text(f"❌ Произошла ошибка: {str(e)}")
+        await status_msg.edit_text(f"❌ Произошла неожиданная ошибка: {str(e)}")
